@@ -9,7 +9,7 @@
   * { box-sizing: border-box; font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
   body { background: #FBF6EC; color: #2B2418; min-height: 100vh; padding-bottom: 60px; }
-  .disp { font-family: 'Fraunces', Georgia, serif; }
+  .disp font-family: 'Fraunces', Georgia, serif; }
   .btn { cursor: pointer; border: none; transition: transform .12s ease, opacity .12s ease, box-shadow .15s ease; }
   .btn:active { transform: scale(0.97); }
   input, textarea { font-family: 'Inter', Arial, sans-serif; }
@@ -100,24 +100,17 @@ function showToast(msg) {
   setTimeout(() => { root.innerHTML = ""; }, 2200);
 }
 
+// PERBAIKAN: Menggunakan localStorage standar browser
 async function loadAll() {
-  if (!window.storage) {
-    storageOk = false;
-    products = [];
-    adminSet = false;
-    renderMain();
-    return;
-  }
   try {
-    const p = await window.storage.get("products", true);
-    products = p ? JSON.parse(p.value) : [];
-  } catch (e) {
-    products = [];
-  }
-  try {
-    const a = await window.storage.get("admin-pass", true);
+    const p = localStorage.getItem("products");
+    products = p ? JSON.parse(p) : [];
+    
+    const a = localStorage.getItem("admin-pass");
     adminSet = !!a;
   } catch (e) {
+    storageOk = false;
+    products = [];
     adminSet = false;
   }
   renderMain();
@@ -127,9 +120,9 @@ async function saveProducts(list) {
   products = list;
   renderMain();
   try {
-    await window.storage.set("products", JSON.stringify(list), true);
+    localStorage.setItem("products", JSON.stringify(list));
   } catch (e) {
-    showToast("Gagal menyimpan. Coba lagi.");
+    showToast("Gagal menyimpan. Memori penuh?");
   }
 }
 
@@ -212,7 +205,7 @@ async function handleSetupAdmin() {
   if (newPw.length < 4) { showLoginErr("Kata sandi minimal 4 karakter."); return; }
   if (newPw !== newPw2) { showLoginErr("Konfirmasi kata sandi tidak cocok."); return; }
   try {
-    await window.storage.set("admin-pass", newPw, true);
+    localStorage.setItem("admin-pass", newPw);
     adminSet = true;
     isAdmin = true;
     closeLoginModal();
@@ -226,8 +219,8 @@ async function handleSetupAdmin() {
 async function handleLogin() {
   const pwInput = document.getElementById("pwInput").value;
   try {
-    const a = await window.storage.get("admin-pass", true);
-    if (a && a.value === pwInput) {
+    const a = localStorage.getItem("admin-pass");
+    if (a && a === pwInput) {
       isAdmin = true;
       closeLoginModal();
       renderMain();
@@ -468,7 +461,7 @@ function renderMain() {
   }
 
   app.innerHTML = `
-    ${!storageOk ? `<div style="background:${PALETTE.rust};color:#fff;padding:10px 16px;text-align:center;font-size:13px;">Penyimpanan tidak tersedia di lingkungan ini saat ini.</div>` : ""}
+    ${!storageOk ? `<div style="background:${PALETTE.rust};color:#fff;padding:10px 16px;text-align:center;font-size:13px;">Penyimpanan (localStorage) diblokir atau tidak didukung di browser ini.</div>` : ""}
 
     <div class="header-wrap" style="background:linear-gradient(135deg, ${PALETTE.navy} 0%, ${PALETTE.navyDeep} 100%);color:#F3EEDD;box-shadow:0 4px 20px rgba(13,32,51,0.28);border-bottom:3px solid ${PALETTE.mustard};">
       <div class="header-inner" style="max-width:1040px;margin:0 auto;width:100%;">
