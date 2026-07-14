@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Toko Sembako Bu Daryono — Papan Stok</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+  * { box-sizing: border-box; font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: #FBF6EC; color: #2B2418; min-height: 100vh; padding-bottom: 60px; }
+  .disp { font-family: 'Fraunces', Georgia, serif; }
+  .btn { cursor: pointer; border: none; transition: transform .12s ease, opacity .12s ease, box-shadow .15s ease; }
+  .btn:active { transform: scale(0.97); }
+  input, textarea { font-family: 'Inter', Arial, sans-serif; }
+  input:focus, textarea:focus { border-color: #2F5B4C !important; box-shadow: 0 0 0 3px rgba(47,91,76,0.14); }
+
+  .header-wrap { position: sticky; top: 0; z-index: 40; padding: 26px 32px; }
+  .header-inner { display: flex; justify-content: space-between; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .brand-row { display: flex; align-items: center; gap: 14px; }
+  .brand-title { font-size: 34px; }
+  .tagline { font-size: 14.5px; }
+  .admin-btn { padding: 10px 18px; font-size: 13.5px; }
+  .page-body { padding: 28px 32px 48px; }
+  .products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
+  .product-card { transition: box-shadow .18s ease, transform .18s ease; }
+  .product-card:hover { box-shadow: 0 8px 22px rgba(29,60,49,0.10); transform: translateY(-2px); }
+  .photo-box { height: 150px; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(30,26,15,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+  .overlay-card { background: #fff; border-radius: 16px; padding: 26px 24px; width: 100%; max-width: 380px; max-height: 90vh; overflow-y: auto; box-shadow: 0 16px 40px rgba(0,0,0,0.22); }
+
+  @media (max-width: 680px) {
+    .header-wrap { padding: 18px 18px 20px; position: static; }
+    .header-inner { flex-direction: column; align-items: flex-start; gap: 14px; }
+    .brand-title { font-size: 25px; }
+    .tagline { font-size: 13px; }
+    .admin-btn { width: 100%; text-align: center; padding: 11px 16px; }
+    .page-body { padding: 18px 16px 40px; }
+    .add-btn { width: 100%; }
+    .products-grid { grid-template-columns: 1fr; gap: 14px; }
+    .photo-box { height: 170px; }
+    .overlay-card { padding: 20px 18px; max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script>
+const PALETTE = {
+  bg: "#FBF6EC", ink: "#2B2418", card: "#FFFFFF", border: "#E7DDC8",
+  green: "#2F5B4C", greenDark: "#1D3C31", navy: "#15304B", navyDeep: "#0D2033",
+  mustard: "#D99A2B", mustardDark: "#8C5F13", rust: "#B24A2B", rustDark: "#6E2C17", muted: "#7A7160"
+};
+
+let products = null;
+let adminSet = null;
+let isAdmin = false;
+let showAdminEntry = false;
+let editingId = null;
+let currentPhoto = "";
+let logoTapCount = 0;
+let logoTapTimer = null;
+let storageOk = true;
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function currency(n) {
+  const num = Number(n) || 0;
+  return "Rp " + num.toLocaleString("id-ID");
+}
+
+function formatRibuan(digits) {
+  if (!digits) return "";
+  return Number(digits).toLocaleString("id-ID");
+}
+
+function stockBadgeHtml(stock) {
+  const s = Number(stock);
+  let label, bg, fg;
+  if (s <= 0) { label = "HABIS"; bg = PALETTE.rust; fg = "#FCEBE3"; }
+  else if (s <= 3) { label = "SISA " + s; bg = PALETTE.mustard; fg = PALETTE.mustardDark; }
+  else { label = "TERSEDIA"; bg = PALETTE.green; fg = "#E7F2EC"; }
+  return `<span style="display:inline-block;font-family:Georgia,serif;font-weight:700;font-size:12px;letter-spacing:0.06em;padding:4px 10px;border-radius:3px;background:${bg};color:${fg};transform:rotate(-2deg);border:1px solid ${bg};">${label}</span>`;
+}
+
+function showToast(msg) {
+  const root = document.getElementById("toastRoot");
+  root.innerHTML = `<div style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:${PALETTE.greenDark};color:#F3EEDD;padding:10px 18px;border-radius:8px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,0.18);z-index:60;">${escapeHtml(msg)}</div>`;
+  setTimeout(() => { root.innerHTML = ""; }, 2200);
+}
+
+async function loadAll() {
+  if (!window.storage) {
+    storageOk = false;
+    products = [];
+    adminSet = false;
+    renderMain();
+    return;
+  }
+  try {
+    const p = await window.storage.get("products", true);
+    products = p ? JSON.parse(p.value) : [];
+  } catch (e) {
+    products = [];
+  }
+  try {
+    const a = await window.storage.get("admin-pass", true);
+    adminSet = !!a;
+  } catch (e) {
+    adminSet = false;
+  }
+  renderMain();
+}
+
+async function saveProducts(list) {
+  products = list;
+  renderMain();
+  try {
+    await window.storage.set("products", JSON.stringify(list), true);
+  } catch (e) {
+    showToast("Gagal menyimpan. Coba lagi.");
+  }
+}
+
+function checkHash() {
+  if (window.location && window.location.hash === "#admin") {
+    showAdminEntry = true;
+    renderMain();
+  }
+}
+
+function handleLogoTap() {
+  if (showAdminEntry) return;
+  logoTapCount += 1;
+  if (logoTapTimer) clearTimeout(logoTapTimer);
+  if (logoTapCount >= 5) {
+    showAdminEntry = true;
+    logoTapCount = 0;
+    renderMain();
+    return;
+  }
+  logoTapTimer = setTimeout(() => { logoTapCount = 0; }, 1200);
+}
+
+function toggleAdmin() {
+  if (isAdmin) {
+    isAdmin = false;
+    renderMain();
+  } else {
+    openLoginModal();
+  }
+}
+
+function closeLoginModal() {
+  document.getElementById("modalRoot").innerHTML = "";
+}
+
+function openLoginModal() {
+  const modalRoot = document.getElementById("modalRoot");
+  if (adminSet) {
+    modalRoot.innerHTML = `
+      <div class="overlay" id="loginOverlay">
+        <div class="overlay-card" onclick="event.stopPropagation()">
+          <h2 class="disp" style="margin:0 0 4px;font-size:20px;">Masuk sebagai admin</h2>
+          <p style="margin:0 0 16px;font-size:13px;color:${PALETTE.muted};">Masukkan kata sandi untuk mengelola stok.</p>
+          <input id="pwInput" type="password" placeholder="Kata sandi admin" style="${inputStyleStr()}" />
+          <p id="loginErr" style="${errStyleStr()};display:none;"></p>
+          <button class="btn" onclick="handleLogin()" style="${primaryBtnStr()};margin-top:10px;">Masuk</button>
+        </div>
+      </div>`;
+    document.getElementById("loginOverlay").addEventListener("click", closeLoginModal);
+    const pwInput = document.getElementById("pwInput");
+    pwInput.focus();
+    pwInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleLogin(); });
+  } else {
+    modalRoot.innerHTML = `
+      <div class="overlay" id="loginOverlay">
+        <div class="overlay-card" onclick="event.stopPropagation()">
+          <h2 class="disp" style="margin:0 0 4px;font-size:20px;">Buat kata sandi admin</h2>
+          <p style="margin:0 0 16px;font-size:13px;color:${PALETTE.muted};">Ini pertama kali situs dibuka. Buat kata sandi yang hanya Anda tahu — ini akan diminta setiap kali ingin mengubah stok.</p>
+          <input id="newPw" type="password" placeholder="Kata sandi baru" style="${inputStyleStr()}" />
+          <input id="newPw2" type="password" placeholder="Ulangi kata sandi" style="${inputStyleStr()};margin-top:10px;" />
+          <p id="loginErr" style="${errStyleStr()};display:none;"></p>
+          <button class="btn" onclick="handleSetupAdmin()" style="${primaryBtnStr()};margin-top:10px;">Buat dan masuk</button>
+        </div>
+      </div>`;
+    document.getElementById("loginOverlay").addEventListener("click", closeLoginModal);
+    document.getElementById("newPw").focus();
+    document.getElementById("newPw2").addEventListener("keydown", (e) => { if (e.key === "Enter") handleSetupAdmin(); });
+  }
+}
+
+function showLoginErr(msg) {
+  const el = document.getElementById("loginErr");
+  if (el) { el.textContent = msg; el.style.display = "block"; }
+}
+
+async function handleSetupAdmin() {
+  const newPw = document.getElementById("newPw").value;
+  const newPw2 = document.getElementById("newPw2").value;
+  if (newPw.length < 4) { showLoginErr("Kata sandi minimal 4 karakter."); return; }
+  if (newPw !== newPw2) { showLoginErr("Konfirmasi kata sandi tidak cocok."); return; }
+  try {
+    await window.storage.set("admin-pass", newPw, true);
+    adminSet = true;
+    isAdmin = true;
+    closeLoginModal();
+    renderMain();
+    showToast("Kata sandi admin dibuat. Simpan baik-baik.");
+  } catch (e) {
+    showLoginErr("Gagal menyimpan kata sandi. Coba lagi.");
+  }
+}
+
+async function handleLogin() {
+  const pwInput = document.getElementById("pwInput").value;
+  try {
+    const a = await window.storage.get("admin-pass", true);
+    if (a && a.value === pwInput) {
+      isAdmin = true;
+      closeLoginModal();
+      renderMain();
+    } else {
+      showLoginErr("Kata sandi salah.");
+    }
+  } catch (e) {
+    showLoginErr("Gagal memeriksa kata sandi.");
+  }
+}
+
+function closeFormModal() {
+  document.getElementById("modalRoot").innerHTML = "";
+  currentPhoto = "";
+  editingId = null;
+}
+
+function openAddForm() {
+  editingId = null;
+  currentPhoto = "";
+  renderFormModal({ name: "", price: "", stock: "", photo: "", desc: "" });
+}
+
+function openEditForm(id) {
+  const p = products.find((x) => x.id === id);
+  if (!p) return;
+  editingId = id;
+  currentPhoto = p.photo || "";
+  renderFormModal({ name: p.name, price: String(p.price), stock: String(p.stock), photo: p.photo || "", desc: p.desc || "" });
+}
+
+function fieldHtml(label, inner) {
+  return `<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:${PALETTE.muted};font-weight:600;">${label}${inner}</label>`;
+}
+
+function renderFormModal(data) {
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="overlay" id="formOverlay">
+      <div class="overlay-card" onclick="event.stopPropagation()">
+        <h2 class="disp" style="margin:0 0 16px;font-size:20px;">${editingId ? "Edit barang" : "Tambah barang"}</h2>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${fieldHtml("Nama barang", `<input id="f-name" style="${inputStyleStr()}" placeholder="Contoh: Beras 5kg" />`)}
+          ${fieldHtml("Harga (Rp)", `<input id="f-price" type="text" inputmode="numeric" style="${inputStyleStr()}" placeholder="10.000" />`)}
+          ${fieldHtml("Jumlah stok", `<input id="f-stock" type="number" style="${inputStyleStr()}" placeholder="20" />`)}
+          ${fieldHtml("Foto produk", `
+            <input id="f-photo-file" type="file" accept="image/*" style="${inputStyleStr()};padding:8px 10px;" />
+            <div id="photoPreviewWrap"></div>
+            <p style="font-size:11.5px;color:${PALETTE.muted};margin:8px 0 2px;">Atau tempel tautan foto (opsional):</p>
+            <input id="f-photo-url" style="${inputStyleStr()}" placeholder="https://..." />
+          `)}
+          ${fieldHtml("Deskripsi singkat (opsional)", `<textarea id="f-desc" style="${inputStyleStr()};min-height:60px;resize:vertical;" placeholder="Kualitas terjamin, harga bersaing"></textarea>`)}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:18px;">
+          <button class="btn" onclick="handleSaveForm()" style="${primaryBtnStr()}">Simpan</button>
+          <button class="btn" onclick="closeFormModal()" style="${pillBtnStr(false)}">Batal</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById("formOverlay").addEventListener("click", closeFormModal);
+
+  document.getElementById("f-name").value = data.name;
+  document.getElementById("f-price").value = formatRibuan(data.price);
+  document.getElementById("f-stock").value = data.stock;
+  document.getElementById("f-desc").value = data.desc;
+  document.getElementById("f-photo-url").value = data.photo && data.photo.startsWith("data:") ? "" : data.photo;
+
+  document.getElementById("f-price").addEventListener("input", (e) => {
+    const digits = e.target.value.replace(/\D/g, "");
+    e.target.value = formatRibuan(digits);
+  });
+
+  document.getElementById("f-photo-file").addEventListener("change", handlePhotoFile);
+  document.getElementById("f-photo-url").addEventListener("input", (e) => {
+    currentPhoto = e.target.value;
+    renderPhotoPreview();
+  });
+
+  renderPhotoPreview();
+}
+
+function renderPhotoPreview() {
+  const wrap = document.getElementById("photoPreviewWrap");
+  if (!wrap) return;
+  if (currentPhoto) {
+    wrap.innerHTML = `
+      <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+        <img src="${currentPhoto}" alt="Pratinjau foto" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid ${PALETTE.border};" />
+        <button type="button" class="btn" onclick="clearPhoto()" style="${pillBtnStr(true)}">Hapus foto</button>
+      </div>`;
+  } else {
+    wrap.innerHTML = "";
+  }
+}
+
+function clearPhoto() {
+  currentPhoto = "";
+  const urlInput = document.getElementById("f-photo-url");
+  if (urlInput) urlInput.value = "";
+  renderPhotoPreview();
+}
+
+function handlePhotoFile(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { showToast("File harus berupa gambar."); return; }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 640;
+      let width = img.width, height = img.height;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+        else { width = Math.round(width * maxDim / height); height = maxDim; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      currentPhoto = canvas.toDataURL("image/jpeg", 0.72);
+      const urlInput = document.getElementById("f-photo-url");
+      if (urlInput) urlInput.value = "";
+      renderPhotoPreview();
+    };
+    img.onerror = () => showToast("Gagal membaca gambar.");
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function handleSaveForm() {
+  const name = document.getElementById("f-name").value.trim();
+  if (!name) { showToast("Nama barang wajib diisi."); return; }
+  const priceDigits = document.getElementById("f-price").value.replace(/\D/g, "");
+  const stock = document.getElementById("f-stock").value;
+  const desc = document.getElementById("f-desc").value.trim();
+  const photo = currentPhoto.trim();
+
+  const list = products ? [...products] : [];
+  if (editingId) {
+    const idx = list.findIndex((p) => p.id === editingId);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], name, price: Number(priceDigits) || 0, stock: Number(stock) || 0, photo, desc };
+    }
+  } else {
+    list.unshift({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      name, price: Number(priceDigits) || 0, stock: Number(stock) || 0, photo, desc
+    });
+  }
+  await saveProducts(list);
+  closeFormModal();
+  showToast(editingId ? "Barang diperbarui." : "Barang ditambahkan.");
+}
+
+async function handleDelete(id) {
+  if (!products) return;
+  const list = products.filter((p) => p.id !== id);
+  await saveProducts(list);
+  showToast("Barang dihapus.");
+}
+
+async function quickStock(id, delta) {
+  if (!products) return;
+  const list = products.map((p) => p.id === id ? { ...p, stock: Math.max(0, Number(p.stock) + delta) } : p);
+  await saveProducts(list);
+}
+
+function inputStyleStr() {
+  return `width:100%;padding:10px 12px;border-radius:8px;border:1px solid ${PALETTE.border};font-size:14px;outline:none;background:#FDFBF5;color:${PALETTE.ink};`;
+}
+function primaryBtnStr() {
+  return `background:${PALETTE.green};color:#EAF1EC;border-radius:8px;padding:11px 16px;font-size:14px;font-weight:600;width:100%;box-shadow:0 2px 8px rgba(47,91,76,0.25);`;
+}
+function pillBtnStr(danger) {
+  return `background:${danger ? "#FBEAE4" : "#F1EEE0"};color:${danger ? PALETTE.rustDark : PALETTE.greenDark};border:none;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;`;
+}
+function errStyleStr() {
+  return `color:${PALETTE.rustDark};font-size:12px;margin:8px 0 0;`;
+}
+
+function logoSvg() {
+  return `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 20L24 8L42 20" stroke="#1B4E7A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="9" y="19" width="30" height="21" rx="1.5" fill="#BFDCF2" stroke="#1B4E7A" stroke-width="2.5" />
+    <rect x="7" y="17" width="34" height="6" rx="1.5" fill="#3E7CB1" stroke="#1B4E7A" stroke-width="2" />
+    <path d="M9 23L11 17M17 23L18.5 17M25 23L26 17M33 23L34.5 17M41 23L39 17" stroke="#1B4E7A" stroke-width="1.6" stroke-linecap="round" />
+    <rect x="20.5" y="28" width="7" height="12" fill="#1B4E7A" />
+    <rect x="12.5" y="26" width="5.5" height="5.5" rx="0.5" fill="#FFFFFF" stroke="#1B4E7A" stroke-width="1.6" />
+    <rect x="30" y="26" width="5.5" height="5.5" rx="0.5" fill="#FFFFFF" stroke="#1B4E7A" stroke-width="1.6" />
+  </svg>`;
+}
+
+function whatsappSvg() {
+  return `<svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M16 4C9.373 4 4 9.373 4 16c0 2.34.667 4.523 1.822 6.377L4 28l5.78-1.783A11.93 11.93 0 0016 28c6.627 0 12-5.373 12-12S22.627 4 16 4z" fill="#FFFFFF" />
+    <path d="M22.2 18.6c-.33-.165-1.95-.96-2.253-1.07-.303-.11-.523-.165-.743.165-.22.33-.853 1.07-1.046 1.29-.193.22-.386.248-.716.083-.33-.165-1.393-.513-2.653-1.637-.98-.874-1.643-1.955-1.836-2.285-.193-.33-.02-.508.145-.673.15-.148.33-.386.495-.578.165-.193.22-.33.33-.55.11-.22.055-.413-.028-.578-.083-.165-.743-1.79-1.018-2.45-.268-.643-.542-.556-.743-.567l-.633-.011c-.22 0-.578.083-.88.413-.303.33-1.155 1.128-1.155 2.75s1.183 3.188 1.348 3.408c.165.22 2.328 3.554 5.638 4.984.788.34 1.403.543 1.883.695.79.251 1.51.216 2.078.131.634-.095 1.95-.797 2.225-1.567.275-.77.275-1.43.193-1.567-.083-.138-.303-.22-.633-.385z" fill="#25D366" />
+  </svg>`;
+}
+
+function renderMain() {
+  const loading = products === null || adminSet === null;
+  const app = document.getElementById("app");
+
+  let productsHtml = "";
+  if (loading) {
+    productsHtml = `<div style="text-align:center;padding:60px 0;color:${PALETTE.muted};">Memuat data toko…</div>`;
+  } else if (products.length === 0) {
+    productsHtml = `
+      <div style="text-align:center;padding:50px 20px;border:1px dashed ${PALETTE.border};border-radius:12px;color:${PALETTE.muted};">
+        <p class="disp" style="font-size:18px;color:${PALETTE.ink};margin:0 0 6px;">Belum ada barang di daftar</p>
+        <p style="font-size:14px;margin:0;">${isAdmin ? "Tambahkan barang pertama lewat tombol di atas." : "Penjual belum menambahkan barang. Cek lagi nanti."}</p>
+      </div>`;
+  } else {
+    productsHtml = `<div class="products-grid">` + products.map((p) => `
+      <div class="product-card" style="background:${PALETTE.card};border:1px solid ${PALETTE.border};border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(43,36,24,0.06);">
+        <div class="photo-box" style="background:${p.photo ? `#EFE9D8 url('${p.photo}') center/cover no-repeat` : "#EFE9D8"};display:${p.photo ? "block" : "flex"};align-items:center;justify-content:center;color:${PALETTE.muted};font-size:13px;position:relative;">
+          ${!p.photo ? "Tanpa foto" : ""}
+          <div style="position:absolute;top:10px;left:10px;">${stockBadgeHtml(p.stock)}</div>
+        </div>
+        <div style="padding:14px 14px 16px;display:flex;flex-direction:column;gap:6px;flex:1;">
+          <h3 class="disp" style="margin:0;font-size:17px;line-height:1.25;">${escapeHtml(p.name)}</h3>
+          ${p.desc ? `<p style="margin:0;font-size:13px;color:${PALETTE.muted};line-height:1.4;">${escapeHtml(p.desc)}</p>` : ""}
+          <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:${PALETTE.rustDark};">${currency(p.price)}</p>
+          <p style="margin:0;font-size:12px;color:${PALETTE.muted};">Stok: ${p.stock}</p>
+          ${isAdmin ? `
+            <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn" onclick="quickStock('${p.id}', -1)" style="${pillBtnStr(false)}">−1 stok</button>
+              <button class="btn" onclick="quickStock('${p.id}', 1)" style="${pillBtnStr(false)}">+1 stok</button>
+              <button class="btn" onclick="openEditForm('${p.id}')" style="${pillBtnStr(false)}">Edit</button>
+              <button class="btn" onclick="handleDelete('${p.id}')" style="${pillBtnStr(true)}">Hapus</button>
+            </div>` : ""}
+        </div>
+      </div>
+    `).join("") + `</div>`;
+  }
+
+  app.innerHTML = `
+    ${!storageOk ? `<div style="background:${PALETTE.rust};color:#fff;padding:10px 16px;text-align:center;font-size:13px;">Penyimpanan tidak tersedia di lingkungan ini saat ini.</div>` : ""}
+
+    <div class="header-wrap" style="background:linear-gradient(135deg, ${PALETTE.navy} 0%, ${PALETTE.navyDeep} 100%);color:#F3EEDD;box-shadow:0 4px 20px rgba(13,32,51,0.28);border-bottom:3px solid ${PALETTE.mustard};">
+      <div class="header-inner" style="max-width:1040px;margin:0 auto;width:100%;">
+        <div class="brand-row">
+          <div aria-hidden="true" onclick="handleLogoTap()" style="width:46px;height:46px;border-radius:12px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:default;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+            ${logoSvg()}
+          </div>
+          <div>
+            <div class="disp" style="font-size:11.5px;letter-spacing:0.2em;color:${PALETTE.mustard};margin-bottom:6px;text-transform:uppercase;">Papan stok resmi</div>
+            <h1 class="disp brand-title" style="font-weight:700;margin:0;line-height:1.14;letter-spacing:-0.01em;">Toko Sembako Bu Daryono</h1>
+            <p class="tagline" style="margin:8px 0 0;color:#DCD6BF;max-width:480px;line-height:1.5;">Kebutuhan pokok lengkap dan selalu fresh — cek dulu stoknya di sini sebelum datang atau pesan, biar nggak kehabisan.</p>
+          </div>
+        </div>
+        ${showAdminEntry ? `
+          <button class="btn admin-btn" onclick="toggleAdmin()" aria-label="${isAdmin ? "Keluar dari mode admin" : "Masuk sebagai admin"}" style="background:${isAdmin ? PALETTE.mustard : "transparent"};color:${isAdmin ? PALETTE.mustardDark : "#F3EEDD"};border:1px solid ${isAdmin ? PALETTE.mustard : "#3E5A7A"};border-radius:8px;font-weight:600;white-space:nowrap;flex-shrink:0;">
+            ${isAdmin ? "Mode admin aktif · Keluar" : "Masuk admin"}
+          </button>` : ""}
+      </div>
+    </div>
+
+    <div class="page-body" style="max-width:1040px;margin:0 auto;">
+      ${isAdmin ? `<button class="btn add-btn" onclick="openAddForm()" style="background:${PALETTE.green};color:#EAF1EC;border-radius:8px;padding:12px 18px;font-size:14px;font-weight:600;margin-bottom:20px;box-shadow:0 2px 8px rgba(47,91,76,0.25);">+ Tambah barang baru</button>` : ""}
+      ${productsHtml}
+    </div>
+
+    <div style="text-align:center;padding:8px 20px 0;color:${PALETTE.muted};font-size:12px;">
+      <span class="disp" style="color:${PALETTE.greenDark};font-weight:700;">Toko Sembako Bu Daryono</span> · kebutuhan pokok, harga bersahabat
+    </div>
+
+    <a href="https://wa.me/628139518252" target="_blank" rel="noopener noreferrer" aria-label="Chat lewat WhatsApp" class="btn" style="position:fixed;bottom:20px;right:20px;width:54px;height:54px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.25);z-index:45;">
+      ${whatsappSvg()}
+    </a>
+  `;
+}
+
+checkHash();
+window.addEventListener("hashchange", checkHash);
+renderMain();
+loadAll();
+</script>
+</body>
+</html>
